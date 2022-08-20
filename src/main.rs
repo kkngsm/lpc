@@ -42,15 +42,13 @@ fn main() {
     let r = auto_corr(LPC_ORDER, &original);
     let (a, _e) = levinson_durbin(LPC_ORDER, &r);
     for (i, p) in predicted.iter_mut().enumerate().skip(LPC_ORDER) {
-        *p = 0.0;
-        for (o, a) in original
+        *p = -original
             .iter()
             .skip(i)
             .take(LPC_ORDER)
             .zip(a.iter().skip(1))
-        {
-            *p -= a * o;
-        }
+            .map(|(x, y)| x * y)
+            .sum::<f32>();
     }
     plot!("title", original, predicted);
 }
@@ -59,12 +57,7 @@ fn auto_corr(order: usize, data: &[f32]) -> Vec<f32> {
     let lags_num = order + 1;
     let mut r: Vec<f32> = Vec::with_capacity(lags_num);
     for i in 0..lags_num {
-        r.push(
-            data.iter()
-                .zip(data.iter().skip(i))
-                .map(|(x, y)| x * y)
-                .sum(),
-        );
+        r.push(data.iter().zip(&data[i..]).map(|(x, y)| x * y).sum());
     }
     r
 }
@@ -75,15 +68,21 @@ fn levinson_durbin(order: usize, r: &[f32]) -> (Vec<f32>, Vec<f32>) {
     // LPC係数を求める
     // LPC係数（再帰的に更新される）
     // a[0]は1で固定のためlpcOrder個の係数を得るためには+1が必要
-    let mut a = vec![0.0; order + 1];
-    // 最小誤差
-    let mut e = vec![0.0; order + 1];
+    // let mut a = vec![0.0; order + 1];
+    // a[0] = 1.0;
+    // a[1] = -r[1] / r[0];
 
-    // k=1の場合
-    a[0] = 1.0;
-    e[0] = 1.0;
-    a[1] = -r[1] / r[0];
-    e[1] = r[0] + r[1] * a[1];
+    let mut a = Vec::with_capacity(order + 1);
+    a.push(1.0);
+    a.push(-r[1] / r[0]);
+
+    // 最小誤差
+    let mut e = Vec::with_capacity(order + 1);
+    e.push(1.0);
+    e.push(r[0] + r[1] * a[1]);
+
+    let mut U = Vec::with_capacity(order + 2);
+    let mut V = Vec::with_capacity(order + 2);
 
     // kの場合からk=1の場合までを再帰的に求める
     for k in 1..order {
@@ -95,8 +94,6 @@ fn levinson_durbin(order: usize, r: &[f32]) -> (Vec<f32>, Vec<f32>) {
         lambda /= e[k];
         // aを更新
         // UとVからaを更新
-        let mut U = Vec::with_capacity(k + 2);
-        let mut V = Vec::with_capacity(k + 2);
         U.push(1.0);
         V.push(0.0);
         for x in &a[1..=k] {
@@ -113,7 +110,9 @@ fn levinson_durbin(order: usize, r: &[f32]) -> (Vec<f32>, Vec<f32>) {
             a.push(u + lambda * v)
         }
 
-        e[k + 1] = e[k] * (1.0 - lambda * lambda);
+        e.push(e[k] * (1.0 - lambda * lambda));
+        U.clear();
+        V.clear();
     }
     (a, e)
 }
