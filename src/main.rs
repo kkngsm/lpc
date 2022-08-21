@@ -39,8 +39,9 @@ fn main() {
     // 過去lpcOrder分から予測するので開始インデックスはlpcOrderから
     // それより前は予測せずにオリジナルの信号をコピーしている
 
-    let r = auto_corr(LPC_ORDER, &original);
-    let (a, _e) = levinson_durbin(LPC_ORDER, &r);
+    let mut lpc = Lpc::new(LPC_ORDER);
+    let a = lpc.calc(LPC_ORDER, &original);
+
     for (i, p) in predicted.iter_mut().enumerate().skip(LPC_ORDER) {
         *p = -original
             .iter()
@@ -52,67 +53,84 @@ fn main() {
     }
     plot!("title", original, predicted);
 }
-fn auto_corr(order: usize, data: &[f32]) -> Vec<f32> {
-    // 自己相関関数
-    let lags_num = order + 1;
-    let mut r: Vec<f32> = Vec::with_capacity(lags_num);
-    for i in 0..lags_num {
-        r.push(data.iter().zip(&data[i..]).map(|(x, y)| x * y).sum());
-    }
-    r
+
+#[derive(Debug, Default)]
+struct Lpc {
+    acf: Vec<f32>,
+    coef: Vec<f32>,
+    e: Vec<f32>,
+    u: Vec<f32>,
+    v: Vec<f32>,
 }
-fn levinson_durbin(order: usize, r: &[f32]) -> (Vec<f32>, Vec<f32>) {
-    // Levinson-Durbinのアルゴリズム
-    // k次のLPC係数からk+1次のLPC係数を再帰的に計算して
-
-    // LPC係数を求める
-    // LPC係数（再帰的に更新される）
-    // a[0]は1で固定のためlpcOrder個の係数を得るためには+1が必要
-    // let mut a = vec![0.0; order + 1];
-    // a[0] = 1.0;
-    // a[1] = -r[1] / r[0];
-
-    let mut a = Vec::with_capacity(order + 1);
-    a.push(1.0);
-    a.push(-r[1] / r[0]);
-
-    // 最小誤差
-    let mut e = Vec::with_capacity(order + 1);
-    e.push(1.0);
-    e.push(r[0] + r[1] * a[1]);
-
-    let mut U = Vec::with_capacity(order + 2);
-    let mut V = Vec::with_capacity(order + 2);
-
-    // kの場合からk=1の場合までを再帰的に求める
-    for k in 1..order {
-        //lamdaを更新
-        let mut lambda = 0.0;
-        for j in 0..=k {
-            lambda -= a[j] * r[k + 1 - j];
+impl Lpc {
+    pub fn new(order: usize) -> Self {
+        Self {
+            acf: Vec::with_capacity(order + 1),
+            coef: Vec::with_capacity(order + 1),
+            e: Vec::with_capacity(order + 1),
+            u: Vec::with_capacity(order + 2),
+            v: Vec::with_capacity(order + 2),
         }
-        lambda /= e[k];
-        // aを更新
-        // UとVからaを更新
-        U.push(1.0);
-        V.push(0.0);
-        for x in &a[1..=k] {
-            U.push(*x);
-        }
-        for x in a.iter().skip(1).take(k).rev() {
-            V.push(*x);
-        }
-        U.push(0.0);
-        V.push(1.0);
-
-        a.clear();
-        for (u, v) in U.iter().zip(&V) {
-            a.push(u + lambda * v)
-        }
-
-        e.push(e[k] * (1.0 - lambda * lambda));
-        U.clear();
-        V.clear();
     }
-    (a, e)
+    pub fn calc(&mut self, order: usize, input: &[f32]) -> &[f32] {
+        self.auto_corr(order, input);
+        self.levinson_durbin(order)
+    }
+    fn auto_corr(&mut self, order: usize, data: &[f32]) {
+        // 自己相関関数
+        self.acf.clear();
+        for i in 0..order + 1 {
+            self.acf
+                .push(data.iter().zip(&data[i..]).map(|(x, y)| x * y).sum());
+        }
+    }
+    fn levinson_durbin(&mut self, order: usize) -> &[f32] {
+        // Levinson-Durbinのアルゴリズム
+        // k次のLPC係数からk+1次のLPC係数を再帰的に計算して
+
+        // LPC係数を求める
+        // LPC係数（再帰的に更新される）
+        // a[0]は1で固定のためlpcOrder個の係数を得るためには+1が必要
+        self.coef.clear();
+        self.coef.push(1.0);
+        self.coef.push(-self.acf[1] / self.acf[0]);
+
+        // 最小誤差
+        self.e.clear();
+        self.e.push(1.0);
+        self.e.push(self.acf[0] + self.acf[1] * self.coef[1]);
+
+        // kの場合からk=1の場合までを再帰的に求める
+        for k in 1..order {
+            self.u.clear();
+            self.v.clear();
+
+            //lamdaを更新
+            let mut lambda = 0.0;
+            for j in 0..=k {
+                lambda -= self.coef[j] * self.acf[k + 1 - j];
+            }
+            lambda /= self.e[k];
+            // aを更新
+            // UとVからaを更新
+            self.u.push(1.0);
+            self.v.push(0.0);
+            for x in &self.coef[1..=k] {
+                self.u.push(*x);
+            }
+            for x in self.coef.iter().skip(1).take(k).rev() {
+                self.v.push(*x);
+            }
+            self.u.push(0.0);
+            self.v.push(1.0);
+
+            self.coef.clear();
+            for (u, v) in self.u.iter().zip(&self.v) {
+                self.coef.push(u + lambda * v)
+            }
+
+            self.e.push(self.e[k] * (1.0 - lambda * lambda));
+        }
+        &self.coef
+    }
 }
