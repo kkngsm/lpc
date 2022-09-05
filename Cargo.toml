@@ -7,3 +7,5 @@ edition = "2021"
 
 [dependencies]
 plotly = "0.7.0"
+realfft = "3.0.1"
+serde_json = "1.0.85"
